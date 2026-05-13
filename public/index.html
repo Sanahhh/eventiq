@@ -658,7 +658,7 @@ async function callClaude(system,user,maxTok=4096){
   const res=await fetch('/api/proxy',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'claude-sonnet-4-5',max_tokens:maxTok,system,messages:[{role:'user',content:user}],tools:[{type:'web_search_20250305',name:'web_search'}]})
+    body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:maxTok,system,messages:[{role:'user',content:user}],tools:[{type:'web_search_20250305',name:'web_search'}]})
   });
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
   const d=await res.json();
