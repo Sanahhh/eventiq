@@ -705,38 +705,11 @@ async function generate(){
   btn.disabled=true;
   showLoading();
   try{
-    const compRaw=await callClaude(
-      `You are a B2B market intelligence analyst. Research the company using web search.
-Return ONLY raw JSON (no markdown, no backticks):
-{"name":"","tagline":"","description":"2-3 sentence overview","products":[],"icp":"","stage":"startup|scaleup|enterprise","goals":[],"keywords":[],"recentNews":""}`,
-      `Research: ${url}\nIndustry: ${industry}\nTarget groups: ${tgs.join(', ')}`,1500);
-    adv(0,1);
-    companyData=parseJ(compRaw)||{name:url.replace(/https?:\/\//,'').split('/')[0],description:'Company in '+industry,keywords:[industry],goals:[]};
-    await delay(200);adv(1,2);
-    const kw=(companyData.keywords||[industry]).slice(0,8).join(', ');
-    const evRaw=await callClaude(
-      `You are a senior B2B events researcher. Search the web for REAL, SPECIFIC events in ${year}.
-Return ONLY a raw JSON array starting with [ — no markdown, no backticks:
-[{"name":"Full Official Event Name","month":1,"day":"15-17","year":${year},"location":"City, Country","type":"Conference|Summit|Expo|Awards|Webinar|Meetup","website":"https://...","priority":"high|medium|low","relevanceScore":8,"description":"2-3 sentence overview","tgFocus":["audience1","audience2"],"industryFocus":["industry1"],"lastYearAttendees":"8,500","boothCost":"$5,000–$15,000 for a 10x10 stand","sponsorshipTiers":"Bronze $3k, Silver $8k, Gold $20k","assistivePrograms":["Co-marketing with organiser","Press release distribution","Speaking slot opportunities","1:1 hosted buyer meetings"],"speakerProfile":"Typical speaker profiles","networking":"Specific networking value","reasons":["Tailored reason 1 for this company","Reason 2","Reason 3"],"dataPoints":{"attendeeCount":"8500","editionsRunning":"12th Annual","topicsCount":"40+","countries":"65 countries","exhibitors":"300+"}}]
-RULES: REAL events only. Real URLs. Tailor reasons to company goals. Specific country in location. Spread across months. Return exactly ${maxEvt} events.`,
-      `Company: ${companyData.name}\nWhat they do: ${companyData.description||''}\nIndustry: ${industry}\nTarget groups: ${tgs.join(', ')}\nRegion: ${region}\nGoals: ${(companyData.goals||[]).join('; ')}\nKeywords: ${kw}\nEvent types: ${types.join(', ')}\nYear: ${year}\nCount: ${maxEvt}`,4096);
-    adv(2,3);await delay(200);adv(3,4);
-    const parsed=parseJ(evRaw);
-    if(!parsed||!Array.isArray(parsed)||!parsed.length)throw new Error('Could not parse events. Please try again.');
-    allEvents=parsed.sort((a,b)=>(a.month-b.month)||(parseInt(a.day||0)-parseInt(b.day||0)));
-    await delay(300);
-    renderResults(tgs,region,industry,year);
-  }catch(err){
-    document.getElementById('resultsPane').innerHTML=`
-      <div class="pane-empty" style="min-height:200px">
-        <div class="pe-icon">⚠️</div>
-        <h3>Something went wrong</h3>
-        <p>${err.message}</p>
-      </div>`;
-  }
-  btn.disabled=false;
-}
-
+    adv(0,1);await delay(200);adv(1,2);
+    const raw=await callClaude(
+      `You are a B2B analyst and events researcher. Given a company URL, research the company and find the best events for them in ${year}.
+Return ONLY this JSON (no markdown, no backticks):
+{"company":{"name":"","description":"2 sentences","stage":"startup|scaleup|enterprise","goals":["goal1"]},"events":[{"name":"","month":1,"day":"15-17","year":${year},"location":"City, Country","type":"Conference|Summit|Expo|Awards|Webinar|Meetup","website":"https://...","priority":"high|medium|low","description":"2 sentences","tgFocus":["audience1"],"industryFocus":["industry1"],"lastYearAttendees":"5,000","boothCost":"$3,000-$10,000","sponsorshipTiers":"Bronze $2k, Silver $5k, Gold $15k","assisti
 function renderResults(tgs,region,industry,year){
   const c=companyData,events=allEvents;
   const highP=events.filter(e=>e.priority==='high').length;
