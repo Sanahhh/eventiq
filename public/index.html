@@ -288,7 +288,7 @@ footer a:hover{color:rgba(255,255,255,.7)}
     <a href="#examples" class="btn-outline">See examples</a>
   </div>
   <div class="hero-nums">
-    <div class="hnum"><div class="hnum-n">60s</div><div class="hnum-l">to generate</div></div>
+    <div class="hnum"><div class="hnum-n">Instant</div><div class="hnum-l">results</div></div>
     <div class="hnum"><div class="hnum-n">20+</div><div class="hnum-l">events curated</div></div>
     <div class="hnum"><div class="hnum-n">Live</div><div class="hnum-l">web research</div></div>
     <div class="hnum"><div class="hnum-n">Free</div><div class="hnum-l">no sign-up</div></div>
@@ -329,7 +329,7 @@ footer a:hover{color:rgba(255,255,255,.7)}
   <div class="app-inner">
     <div class="sec-eyebrow">Generate free</div>
     <div class="sec-title">Build your events calendar</div>
-    <p class="sec-sub" style="margin-bottom:0">Enter your company URL and configure below. Results in ~60 seconds.</p>
+    <p class="sec-sub" style="margin-bottom:0">Enter your company URL and configure below. Results appear instantly.</p>
 
     <div class="app-layout">
 
@@ -448,7 +448,7 @@ footer a:hover{color:rgba(255,255,255,.7)}
         <div class="pane-empty">
           <div class="pe-icon">📅</div>
           <h3>Your calendar will appear here</h3>
-          <p>Fill in your company details and hit generate. Takes about 60 seconds.</p>
+          <p>Fill in your company details and hit generate. Results appear instantly.</p>
         </div>
       </div>
     </div>
@@ -653,18 +653,105 @@ function switchTab(id,btn){
   document.getElementById('tab-'+id).classList.add('on');
 }
 
-/* ── API VIA PROXY ── */
-async function callClaude(system,user,maxTok=4096){
-  const res=await fetch('/api/proxy',{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:maxTok,system,messages:[{role:'user',content:user}],tools:[{type:'web_search_20250305',name:'web_search'}]})
-  });
-  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
-  const d=await res.json();
-  return d.content.filter(b=>b.type==='text').map(b=>b.text).join('\n');
+/* ── EVENTS DATABASE (Google Sheets CSV) ── */
+const SHEET_URL='https://docs.google.com/spreadsheets/d/e/2PACX-1vTrpLoJfSM6mfD597G09C0Hlw8yViB11DW9LYDkTbGbHdf_T38BQkLY4ZB8rNmJVnMAH9iar9dLyYxf/pub?gid=571556748&single=true&output=csv';
+let SHEET_CACHE=null;
+
+/* CSV parser — handles quoted fields with commas, escaped quotes, newlines */
+function parseCSV(text){
+  const rows=[];let row=[],field='',inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i],n=text[i+1];
+    if(inQuotes){
+      if(c==='"'&&n==='"'){field+='"';i++}
+      else if(c==='"'){inQuotes=false}
+      else field+=c;
+    }else{
+      if(c===','){row.push(field);field=''}
+      else if(c==='\n'||c==='\r'){
+        if(field!==''||row.length){row.push(field);rows.push(row);row=[];field=''}
+        if(c==='\r'&&n==='\n')i++;
+      }
+      else if(c==='"'&&field===''){inQuotes=true}
+      else field+=c;
+    }
+  }
+  if(field!==''||row.length){row.push(field);rows.push(row)}
+  return rows;
 }
-function parseJ(t){const m=t.match(/[\[{][\s\S]*[\]}]/);if(!m)return null;try{return JSON.parse(m[0])}catch{return null}}
+
+/* Convert CSV rows → event objects matching the schema the UI expects */
+function csvToEvents(rows){
+  if(!rows.length)return[];
+  const headers=rows[0].map(h=>h.trim());
+  const events=[];
+  for(let r=1;r<rows.length;r++){
+    const row=rows[r];if(!row||!row[0])continue;
+    const o={};headers.forEach((h,i)=>{o[h]=(row[i]||'').trim()});
+    // Split pipe-separated multi-value fields
+    const splitArr=(s)=>s?s.split('|').map(x=>x.trim()).filter(Boolean):[];
+    events.push({
+      name:o.name,
+      month:parseInt(o.month)||1,
+      day:o.day,
+      year:parseInt(o.year)||2026,
+      location:o.location,
+      region:o.region,
+      type:o.type,
+      website:o.website,
+      priority:o.priority||'medium',
+      description:o.description,
+      tgFocus:splitArr(o.tgFocus),
+      industryFocus:splitArr(o.industryFocus),
+      lastYearAttendees:o.lastYearAttendees,
+      boothCost:o.boothCost,
+      sponsorshipTiers:o.sponsorshipTiers,
+      assistivePrograms:splitArr(o.assistivePrograms),
+      speakerProfile:o.speakerProfile,
+      networking:o.networking,
+      reasons:splitArr(o.reasons),
+      dataPoints:{
+        attendeeCount:o.attendeeCount,
+        editionsRunning:o.editionsRunning,
+        topicsCount:o.topicsCount,
+        countries:o.countries,
+        exhibitors:o.exhibitors
+      }
+    });
+  }
+  return events;
+}
+
+async function fetchSheetData(){
+  if(SHEET_CACHE)return SHEET_CACHE;
+  const res=await fetch(SHEET_URL+'&_='+Date.now());
+  if(!res.ok)throw new Error('Could not load events database (HTTP '+res.status+'). Check the sheet is published to web.');
+  const text=await res.text();
+  const rows=parseCSV(text);
+  SHEET_CACHE=csvToEvents(rows);
+  return SHEET_CACHE;
+}
+
+/* Region groupings — handle finer-grained selections like India/SEA → APAC */
+const REGION_MAP={'NA':['NA'],'EMEA':['EMEA'],'APAC':['APAC'],'India':['APAC'],'SEA':['APAC'],'DACH':['EMEA'],'UK&Ireland':['EMEA'],'LATAM':['LATAM'],'MEA':['MEA','EMEA']};
+
+function filterEvents(events,{region,industry,tgs,types}){
+  const allowedRegions=REGION_MAP[region]||[region];
+  return events.filter(e=>{
+    if(!allowedRegions.includes(e.region))return false;
+    if(industry&&!(e.industryFocus||[]).some(f=>f.toLowerCase().includes(industry.toLowerCase())||industry.toLowerCase().includes(f.toLowerCase())))return false;
+    if(tgs&&tgs.length&&!(e.tgFocus||[]).some(f=>tgs.some(t=>f.toLowerCase().includes(t.toLowerCase())||t.toLowerCase().includes(f.toLowerCase()))))return false;
+    if(types&&types.length&&!types.some(t=>(e.type||'').toLowerCase().includes(t.toLowerCase())))return false;
+    return true;
+  }).sort((a,b)=>{
+    // High priority first, then by month
+    const pri={high:0,medium:1,low:2};
+    const pa=pri[a.priority]??1,pb=pri[b.priority]??1;
+    if(pa!==pb)return pa-pb;
+    return (a.month-b.month)||(parseInt(a.day)||0)-(parseInt(b.day)||0);
+  });
+}
+
 function pC(p){return p==='high'?'ph':p==='medium'?'pm':'pl'}
 function tC(t=''){if(t.includes('Conference'))return'et-conf';if(t.includes('Summit'))return'et-summit';if(t.includes('Expo')||t.includes('Trade'))return'et-expo';if(t.includes('Award'))return'et-awards';if(t.includes('Webinar')||t.includes('Virtual'))return'et-webinar';return'et-other'}
 function delay(ms){return new Promise(r=>setTimeout(r,ms))}
@@ -673,14 +760,13 @@ function showLoading(){
   document.getElementById('resultsPane').innerHTML=`
   <div class="loading-pane">
     <div class="ring"></div>
-    <div class="lp-title">Researching &amp; building…</div>
-    <div class="lp-sub">Live web search · ~60 seconds</div>
+    <div class="lp-title">Building your calendar…</div>
+    <div class="lp-sub">Fetching curated events database</div>
     <div class="steps-list">
-      <div class="sr active" id="s0"><span class="si"><div class="ms-spin"></div></span>Analysing company website</div>
-      <div class="sr" id="s1"><span class="si" style="font-size:.68rem;color:var(--ink-5)">2</span>Extracting goals &amp; ICP</div>
-      <div class="sr" id="s2"><span class="si" style="font-size:.68rem;color:var(--ink-5)">3</span>Searching event databases</div>
-      <div class="sr" id="s3"><span class="si" style="font-size:.68rem;color:var(--ink-5)">4</span>Scoring by relevance</div>
-      <div class="sr" id="s4"><span class="si" style="font-size:.68rem;color:var(--ink-5)">5</span>Writing attendance rationale</div>
+      <div class="sr active" id="s0"><span class="si"><div class="ms-spin"></div></span>Loading events database</div>
+      <div class="sr" id="s1"><span class="si" style="font-size:.68rem;color:var(--ink-5)">2</span>Matching your region &amp; industry</div>
+      <div class="sr" id="s2"><span class="si" style="font-size:.68rem;color:var(--ink-5)">3</span>Filtering by target group</div>
+      <div class="sr" id="s3"><span class="si" style="font-size:.68rem;color:var(--ink-5)">4</span>Sorting by priority</div>
     </div>
   </div>`
 }
@@ -696,7 +782,6 @@ async function generate(){
   const tgs=[...document.querySelectorAll('#msDropdown input:checked')].map(c=>c.value);
   const industry=document.getElementById('industry').value;
   const year=document.getElementById('year').value;
-  const maxEvt=document.getElementById('maxEvt').value;
   const types=[...document.querySelectorAll('#etGroup .echip.on')].map(c=>c.dataset.val);
   if(!url||!region||!industry){alert('Please fill in Company URL, Region, and Industry.');return}
   if(!tgs.length){alert('Please select at least one target group.');return}
@@ -705,11 +790,28 @@ async function generate(){
   btn.disabled=true;
   showLoading();
   try{
-    adv(0,1);await delay(200);adv(1,2);
-    const raw=await callClaude(
-      `You are a B2B analyst and events researcher. Given a company URL, research the company and find the best events for them in ${year}.
-Return ONLY this JSON (no markdown, no backticks):
-{"company":{"name":"","description":"2 sentences","stage":"startup|scaleup|enterprise","goals":["goal1"]},"events":[{"name":"","month":1,"day":"15-17","year":${year},"location":"City, Country","type":"Conference|Summit|Expo|Awards|Webinar|Meetup","website":"https://...","priority":"high|medium|low","description":"2 sentences","tgFocus":["audience1"],"industryFocus":["industry1"],"lastYearAttendees":"5,000","boothCost":"$3,000-$10,000","sponsorshipTiers":"Bronze $2k, Silver $5k, Gold $15k","assisti
+    adv(0,1);
+    const allDbEvents=await fetchSheetData();
+    await delay(300);adv(1,2);await delay(300);adv(2,3);
+    const filtered=filterEvents(allDbEvents,{region,industry,tgs,types});
+    await delay(300);
+    // Derive a simple company info object from the URL (no API call)
+    const domain=url.replace(/https?:\/\//,'').replace(/^www\./,'').split('/')[0];
+    const name=domain.split('.')[0].charAt(0).toUpperCase()+domain.split('.')[0].slice(1);
+    companyData={name,description:`${industry} company targeting ${tgs.slice(0,3).join(', ')} in ${region}.`,stage:'',goals:[]};
+    if(!filtered.length){
+      document.getElementById('resultsPane').innerHTML=`<div class="pane-empty" style="min-height:200px"><div class="pe-icon">🔍</div><h3>No matching events</h3><p style="margin-top:.5rem">No events in our database match all your filters for <strong>${region}</strong> · <strong>${industry}</strong>. Try a different region, industry, or fewer event types.</p></div>`;
+      btn.disabled=false;return;
+    }
+    allEvents=filtered;
+    renderResults(tgs,region,industry,year);
+  }catch(err){
+    document.getElementById('resultsPane').innerHTML=`<div class="pane-empty" style="min-height:200px"><div class="pe-icon">⚠️</div><h3>Could not load events</h3><p>${err.message}</p></div>`;
+  }
+  btn.disabled=false;
+}
+
+
 function renderResults(tgs,region,industry,year){
   const c=companyData,events=allEvents;
   const highP=events.filter(e=>e.priority==='high').length;
